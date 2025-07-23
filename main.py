@@ -1,16 +1,26 @@
 import os
 import time
+import requests
 from telegram import Bot
 from dotenv import load_dotenv
 
-# Chargement des variables d’environnement
+# Charger les variables d’environnement
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# Fonction pour envoyer une alerte Telegram
+# Clé temporaire RapidAPI (simulée ici)
+RAPIDAPI_KEY = "856323b0d3msh25017323f4c6747p1d564cjsnc15ae3e3028c"
+RAPIDAPI_HOST = "api-football-v1.p.rapidapi.com"
+
+HEADERS = {
+    "X-RapidAPI-Key": RAPIDAPI_KEY,
+    "X-RapidAPI-Host": RAPIDAPI_HOST
+}
+
+# Fonction pour envoyer une alerte
 def send_alert(match_name, minute, score, stats, confidence):
     message = f"🔔 Alerte but probable ({minute}e)\n" \
               f"{match_name} ({score})\n" \
@@ -18,53 +28,58 @@ def send_alert(match_name, minute, score, stats, confidence):
               f"Confiance : {confidence} %"
     bot.send_message(chat_id=CHAT_ID, text=message)
 
-# Match fictif simulé (tu remplaceras plus tard par des stats réelles)
-def extract_live_matches():
-    return [{
-        "match": "Marseille - Nice",
-        "minute": 78,
-        "score": "1-1",
-        "stats": {
-            "tirs_cadres": 6,
-            "xg": 1.7,
-            "possession": 61,
-            "corners": 6,
-            "dangerous_attacks_ratio": 2.4,
-            "momentum": 72,
-            "score_status": "draw"
-        }
-    }]
+# Récupérer les matchs live via API-Football
+def get_live_matches():
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures?live=all"
+    try:
+        response = requests.get(url, headers=HEADERS)
+        data = response.json()
+        return data.get("response", [])
+    except Exception as e:
+        print("Erreur API:", e)
+        return []
 
-# Calcul du score de confiance et déclenchement alerte
+# Analyser les stats et déterminer le score de confiance
 def evaluate_match(match):
-    stats = match["stats"]
+    teams = match["teams"]
+    stats = match["statistics"]
+    fixture = match["fixture"]
+
+    home = teams["home"]["name"]
+    away = teams["away"]["name"]
+    minute = fixture["status"]["elapsed"]
+    score = f'{match["goals"]["home"]} - {match["goals"]["away"]}'
+
+    # Extraire quelques stats pertinentes (simulateur simple)
+    shots_on_target = stats[0]["statistics"][6]["value"] or 0
+    possession = int(str(stats[0]["statistics"][9]["value"]).replace("%", "")) if stats[0]["statistics"][9]["value"] else 0
+    corners = stats[0]["statistics"][7]["value"] or 0
+
     points = 0
-    if stats["tirs_cadres"] >= 5: points += 1
-    if stats["xg"] > 1.5: points += 2
-    if stats["possession"] > 60: points += 1
-    if stats["corners"] >= 5: points += 1
-    if stats["dangerous_attacks_ratio"] >= 2: points += 1
-    if stats["momentum"] >= 70: points += 1
-    if stats["score_status"] in ["draw", "losing"]: points += 1
+    if shots_on_target >= 5: points += 2
+    if possession >= 55: points += 1
+    if corners >= 6: points += 1
+    if match["goals"]["home"] == match["goals"]["away"]: points += 1
 
-    confidence = round((points / 7) * 100)
+    confidence = round((points / 5) * 100)
 
-    if points >= 3:
-        stats_str = f"Tirs cadrés : {stats['tirs_cadres']} | xG : {stats['xg']} | Corners : {stats['corners']}"
-        send_alert(match["match"], match["minute"], match["score"], stats_str, confidence)
+    if confidence >= 60:
+        stats_str = f"Tirs cadrés : {shots_on_target} | Possession : {possession}% | Corners : {corners}"
+        match_name = f"{home} - {away}"
+        send_alert(match_name, minute, score, stats_str, confidence)
 
 # Boucle principale
 def main_loop():
     while True:
-        try:
-            matches = extract_live_matches()
-            for match in matches:
-                if 75 <= match["minute"] <= 90:
-                    evaluate_match(match)
-        except Exception as e:
-            print("Erreur :", e)
-        time.sleep(60)  # une analyse par minute
+        matches = get_live_matches()
+        for m in matches:
+            try:
+                minute = m["fixture"]["status"]["elapsed"]
+                if 75 <= minute <= 90:
+                    evaluate_match(m)
+            except Exception as e:
+                print("Erreur analyse:", e)
+        time.sleep(60)
 
 if __name__ == "__main__":
     main_loop()
-
